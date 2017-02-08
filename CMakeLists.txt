@@ -26,7 +26,7 @@ add_library(live555-libs SHARED
             live555-jni.cpp
             NextProxyServerMediaSession.cpp
             QosMeasurementRecord.cpp
-            NextRtspProxy.cpp)
+            NextProxyMonitor.cpp)
 
 target_include_directories(live555-libs PRIVATE
                            ${CMAKE_SOURCE_DIR}/include

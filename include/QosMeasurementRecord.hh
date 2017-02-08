@@ -33,13 +33,23 @@ public:
 public:
     RTPSource* fSource;
     qosMeasurementRecord* fNext;
+    TaskToken interPacketGapCheckTimerTask = NULL;
 
 public:
     struct timeval measurementStartTime, measurementEndTime;
     double kbits_per_second_min, kbits_per_second_max;
     double kBytesTotal;
     double packet_loss_fraction_min, packet_loss_fraction_max;
-    unsigned totNumPacketsReceived, totNumPacketsExpected;
+    unsigned totNumPacketsReceived = ~0, totNumPacketsExpected;
+
+private:
+    void scheduleNextQOSMeasurement();
+    void periodicQOSMeasurement(void* /*clientData*/);
+    void checkInterPacketGaps(void* /*clientData*/);
+    unsigned qosMeasurementIntervalMS = 1000;
+    unsigned nextQOSMeasurementUSecs;
+    qosMeasurementRecord* qosRecordHead = NULL;
+    unsigned interPacketGapMaxTime = 5;//in seceonds
 };
 
 #endif //MYAPPLICATION_QOSMEASUREMENTRECORD_HH

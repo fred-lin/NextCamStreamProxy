@@ -4,10 +4,10 @@
 NextProxyServerMediaSession* NextProxyServerMediaSession::createNew(UsageEnvironment &env,
                                                                     GenericMediaServer *ourMediaServer,
                                                                     char const *inputStreamURL,
+                                                                    portNumBits tunnelOverHTTPPortNum,
                                                                     const char *streamName,
                                                                     const char *username,
                                                                     const char *password,
-                                                                    portNumBits tunnelOverHTTPPortNum,
                                                                     int verbosityLevel) {
     return new NextProxyServerMediaSession(env, ourMediaServer, inputStreamURL, streamName, username, password, tunnelOverHTTPPortNum, verbosityLevel);
 }
@@ -26,7 +26,6 @@ NextProxyServerMediaSession::NextProxyServerMediaSession(UsageEnvironment &env,
                                                        tunnelOverHTTPPortNum,
                                                        verbosityLevel > 0 ? verbosityLevel-1 : verbosityLevel,
                                                        6970);*/
-
 }
 
 RTCPInstance* NextProxyServerMediaSession::createRTCP(Groupsock *RTCPgs, unsigned totSessionBW,
@@ -66,3 +65,43 @@ ProxyRTSPClient* createNewOurProxyRTSPClientFunc(ProxyServerMediaSession& ourSer
     return new NextProxyRTSPClient(ourServerMediaSession, rtspURL, username, password,
                                    tunnelOverHTTPPortNum, verbosityLevel, socketNumToServer);
 }
+
+/*void NextProxyServerMediaSession::checkInterPacketGaps(void*) {
+    if (interPacketGapMaxTime == 0) return; // we're not checking
+
+    // Check each subsession, counting up how many packets have been received:
+    unsigned newTotNumPacketsReceived = 0;
+
+    MediaSubsessionIterator iter((MediaSession&)fClientMediaSession);
+    MediaSubsession* subsession;
+    while ((subsession = iter.next()) != NULL) {
+        RTPSource* src = subsession->rtpSource();
+        if (src == NULL) continue;
+        newTotNumPacketsReceived += src->receptionStatsDB().totNumPacketsReceived();
+    }
+
+    if (newTotNumPacketsReceived == totNumPacketsReceived) {
+        // No additional packets have been received since the last time we
+        // checked, so end this stream:
+
+        interPacketGapCheckTimerTask = NULL;
+        //notifyBackendDead();
+
+    } else {
+        totNumPacketsReceived = newTotNumPacketsReceived;
+        // Check again, after the specified delay:
+        interPacketGapCheckTimerTask
+                = ((RTSPServer*)fOurMediaServer)->envir().taskScheduler().scheduleDelayedTask(interPacketGapMaxTime*1000000,
+                                                                          (TaskFunc*) checkInterPacketGaps, NULL);
+    }
+}
+
+void NextProxyServerMediaSession::checkProxyClientDescribeCompleteness(void*) {
+
+    if(describeCompletedSuccessfully()) {
+        proxyClientDescribeCompletenessCheckTask = fOurMediaServer->envir().taskScheduler().scheduleDelayedTask(2, (TaskFunc*) checkProxyClientDescribeCompleteness, NULL);
+    } else {
+        //notifyBackendDead();
+    }
+
+}*/

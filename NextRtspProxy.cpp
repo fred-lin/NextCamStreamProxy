@@ -5,33 +5,22 @@
 #include "NextProxyServerMediaSession.hh"
 #include "QosMeasurementRecord.hh"
 
-UsageEnvironment* usageEnv;
+RTSPServer* rtspServer = NULL;
 
-Boolean proxyREGISTERRequests = False;
-UserAuthenticationDatabase* authDB = NULL;
-UserAuthenticationDatabase* authDBForREGISTER = NULL;
-RTSPServer* rtspServer;
-
-int verbosityLevel = 0;
-Boolean streamRTPOverTCP = False;
-portNumBits tunnelOverHTTPPortNum = 0;
-portNumBits rtspServerPortNum = 20001;
-char* username = NULL;
-char* password = NULL;
 char eventLoopWatchVariable = 0;
-char stop = 1;
-TaskToken receiverReportTimerTask;
-void printQOSData(int exitCode);
+void printQOSData();
 void addToStreamClientState();
 void beginQOSMeasurement();
-
-#define LOG_TAG "LIVE555"
-
-#define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, \
-                                             __VA_ARGS__))
-
-#define LOGD(...) ((void)__android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, \
-                                             __VA_ARGS__))
+void checkProxyClientDescribeCompleteness();
+TaskToken receiverReportTimerTask = NULL;
+TaskToken interPacketGapCheckTimerTask = NULL;
+TaskToken proxyClientDescribeCompletenessCheckTask = NULL;
+unsigned interPacketGapMaxTime = 5;//in seceonds
+unsigned totNumPacketsReceived = ~0; // used if checking inter-packet gaps
+unsigned qosMeasurementIntervalMS = 1000;
+static qosMeasurementRecord* qosRecordHead = NULL;
+/*static*/ void periodicQOSMeasurement(void* clientData); // forward
+/*static*/ unsigned nextQOSMeasurementUSecs;
 
 typedef struct stream_client_state {
     MediaSession* mediaSession;
@@ -44,48 +33,11 @@ typedef struct proxy_context {
 } ProxyContext;
 ProxyContext proxyContext;
 
-static  RTSPServer* createRTSPServer(Port port) {
-    return RTSPServer::createNew(*usageEnv, port, authDB);
-}
-
-
-void *doEventLoopFunc(void* context) {
-
-    usageEnv->taskScheduler().doEventLoop(&((NextProxyServerMediaSession*) streamState.mediaSession)->describeCompletedFlag);
-
-    //
-    // Send message to player to start playing here!
-    //
-
-    usageEnv->taskScheduler().doEventLoop(&eventLoopWatchVariable);
-
-    return context;
-}
-
-void shutdownServer(RTSPServer *rtspServer) {
-    if(usageEnv != NULL) {
-        usageEnv->taskScheduler().unscheduleDelayedTask(receiverReportTimerTask);
-    }
-    printQOSData();
-
-    ((NextProxyServerMediaSession*) streamState.mediaSession)->getfPresentationTimeSessionNormalizer()->getPresentationTimeSubsessionNormalizer()->detachInputSource();
-
-    if(streamState.clientMediaSession != NULL) {
-        MediaSubsessionIterator iterator(*streamState.clientMediaSession);
-        MediaSubsession* subsession;
-        while((subsession = iterator.next()) != NULL) {
-            //subsession->rtpSource()->stopGettingFrames();
-            Medium::close(subsession->sink);
-            subsession->sink = NULL;
-        }
-    }
-
-    Medium::close(rtspServer);
-
-    pthread_mutex_destroy(&proxyContext.lock);
-
-    usageEnv->reclaim(); usageEnv = NULL;
-    //delete scheduler; scheduler = NULL;
+static  RTSPServer* createRTSPServer(UsageEnvironment* usageEnv) {
+    UserAuthenticationDatabase* authDB = NULL;
+    portNumBits rtspServerPortNum = 20001;
+    //portNumBits rtspServerPortNum = (portNumBits) rand() % 100 + 20000;
+    return RTSPServer::createNew(*usageEnv, (Port) rtspServerPortNum, authDB);
 }
 
 void addToStreamClientState() {
@@ -93,59 +45,39 @@ void addToStreamClientState() {
     streamState.clientMediaSession = mediaSession;
 }
 
-void sendAppPacket() {
-    //streamState.mediaSubsessionIterator->next()->rtcpInstance()->sendAppPacket()
+void *doEventLoopFunc(void* context) {
+
+    rtspServer->envir().taskScheduler().doEventLoop(&((NextProxyServerMediaSession*) streamState.mediaSession)->describeCompletedFlag);
+    addToStreamClientState();
+
+    //
+    // Send message to player to start playing here!
+    //
+
+    rtspServer->envir().taskScheduler().doEventLoop(&eventLoopWatchVariable);
+
+    return context;
 }
 
-char startRtspProxy(char* streamUrl) {
-    OutPacketBuffer::maxSize = 100000;
+void shutdownServer(RTSPServer *rtspServer) {
+    if(rtspServer != NULL) {
+        eventLoopWatchVariable = 1;
 
-    TaskScheduler* scheduler = BasicTaskScheduler::createNew();
-    usageEnv = BasicUsageEnvironment::createNew(*scheduler);
+        rtspServer->envir().taskScheduler().unscheduleDelayedTask(receiverReportTimerTask);
+        rtspServer->envir().taskScheduler().unscheduleDelayedTask(interPacketGapCheckTimerTask);
+        rtspServer->envir().taskScheduler().unscheduleDelayedTask(proxyClientDescribeCompletenessCheckTask);
 
-    rtspServer = createRTSPServer(rtspServerPortNum);
+        printQOSData();
 
-    char const* proxiedStreamUrl = streamUrl;
+        Medium::close(rtspServer);
 
-    // for TCP back-end connection
-    streamRTPOverTCP = True;
-    //tunnelOverHTTPPortNum = (portNumBits)(~0);
-
-    char streamName[30];
-    sprintf(streamName, "%s", "proxyStream");
-
-    NextProxyServerMediaSession* sms = NextProxyServerMediaSession::createNew(*usageEnv, rtspServer, proxiedStreamUrl, streamName, username, password, tunnelOverHTTPPortNum, verbosityLevel);
-
-    streamState.mediaSession = (MediaSession*) sms;
-
-    rtspServer->addServerMediaSession(sms);
-
-    //char* proxyStreamUrl = rtspServer->rtspURL(sms);
-
-    pthread_attr_t threadAttr_;
-
-    pthread_attr_init(&threadAttr_);
-    pthread_attr_setdetachstate(&threadAttr_, PTHREAD_CREATE_DETACHED);
-
-    pthread_mutex_init(&proxyContext.lock, NULL);
-
-    pthread_t looperThread;
-    pthread_create(&looperThread, &threadAttr_, &doEventLoopFunc, &proxyContext);
-
-    return *rtspServer->rtspURL(sms);
+        streamState.clientMediaSession = NULL;
+        streamState.mediaSession = NULL;
+        qosRecordHead = NULL;
+        rtspServer->envir().reclaim(); //usageEnv = NULL;
+        eventLoopWatchVariable = 0;
+    }
 }
-
-void shutdownStream() {
-    shutdownServer(rtspServer);
-}
-
-unsigned qosMeasurementIntervalMS = 1000;
-
-qosMeasurementRecord* qosRecordHead = NULL;
-
-void periodicQOSMeasurement(void* clientData); // forward
-
-unsigned nextQOSMeasurementUSecs;
 
 void scheduleNextQOSMeasurement() {
     nextQOSMeasurementUSecs += qosMeasurementIntervalMS*1000;
@@ -154,7 +86,7 @@ void scheduleNextQOSMeasurement() {
     unsigned timeNowUSecs = timeNow.tv_sec*1000000 + timeNow.tv_usec;
     int usecsToDelay = nextQOSMeasurementUSecs - timeNowUSecs;
 
-    receiverReportTimerTask = usageEnv->taskScheduler().scheduleDelayedTask(
+    receiverReportTimerTask = rtspServer->envir().taskScheduler().scheduleDelayedTask(
             usecsToDelay, (TaskFunc*)periodicQOSMeasurement, (void*)NULL);
 }
 
@@ -271,7 +203,77 @@ void printQOSData() {
     delete qosRecordHead;
 }
 
+void checkInterPacketGaps() {
+    if (interPacketGapMaxTime == 0) return; // we're not checking
+
+    // Check each subsession, counting up how many packets have been received:
+    unsigned newTotNumPacketsReceived = 0;
+
+    MediaSubsessionIterator iter(*streamState.clientMediaSession);
+    MediaSubsession* subsession;
+    while ((subsession = iter.next()) != NULL) {
+        RTPSource* src = subsession->rtpSource();
+        if (src == NULL) continue;
+        newTotNumPacketsReceived += src->receptionStatsDB().totNumPacketsReceived();
+    }
+
+    if (newTotNumPacketsReceived == totNumPacketsReceived) {
+        // No additional packets have been received since the last time we
+        // checked, so end this stream:
+
+        interPacketGapCheckTimerTask = NULL;
+
+        //
+        // notify the player to start again here
+        //
+
+
+    } else {
+        totNumPacketsReceived = newTotNumPacketsReceived;
+        // Check again, after the specified delay:
+        interPacketGapCheckTimerTask
+                = rtspServer->envir().taskScheduler().scheduleDelayedTask(interPacketGapMaxTime*1000000,
+                                                                          (TaskFunc*)checkInterPacketGaps, NULL);
+    }
+}
+
+char startRtspProxy(char* streamUrl) {
+    OutPacketBuffer::maxSize = 100000;
+
+    UsageEnvironment* usageEnv;
+    TaskScheduler* scheduler = BasicTaskScheduler::createNew();
+    usageEnv = BasicUsageEnvironment::createNew(*scheduler);
+
+    portNumBits tunnelOverHTTPPortNum = 0;
+
+    rtspServer = createRTSPServer(usageEnv);
+
+    char const* proxiedStreamUrl = streamUrl;
+
+    // for TCP back-end connection
+    tunnelOverHTTPPortNum = (portNumBits)(~0);
+
+    NextProxyServerMediaSession* sms = NextProxyServerMediaSession::createNew(*usageEnv, rtspServer, proxiedStreamUrl, tunnelOverHTTPPortNum);
+
+    streamState.mediaSession = (MediaSession*) sms;
+
+    rtspServer->addServerMediaSession(sms);
+
+    pthread_attr_t threadAttr_;
+    pthread_attr_init(&threadAttr_);
+    pthread_attr_setdetachstate(&threadAttr_, PTHREAD_CREATE_DETACHED);
+    pthread_mutex_init(&proxyContext.lock, NULL);
+    pthread_t looperThread;
+    pthread_create(&looperThread, &threadAttr_, &doEventLoopFunc, &proxyContext);
+
+    return *rtspServer->rtspURL((ServerMediaSession*) streamState.mediaSession);
+}
+
 void startStreamingMeasurement() {
-    addToStreamClientState();
-    beginQOSMeasurement();
+    checkInterPacketGaps();
+    //beginQOSMeasurement();
+}
+
+void shutdownStream() {
+    shutdownServer(rtspServer);
 }

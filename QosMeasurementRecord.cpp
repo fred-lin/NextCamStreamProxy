@@ -1,3 +1,4 @@
+#include <MediaSession.hh>
 #include "QosMeasurementRecord.hh"
 
 void qosMeasurementRecord
@@ -37,4 +38,57 @@ void qosMeasurementRecord
             packet_loss_fraction_max = lossFractionNow;
         }
     }
+}
+
+void qosMeasurementRecord::scheduleNextQOSMeasurement() {
+    nextQOSMeasurementUSecs += qosMeasurementIntervalMS*1000;
+    struct timeval timeNow;
+    gettimeofday(&timeNow, NULL);
+    unsigned timeNowUSecs = timeNow.tv_sec*1000000 + timeNow.tv_usec;
+    int usecsToDelay = nextQOSMeasurementUSecs - timeNowUSecs;
+
+    //receiverReportTimerTask = rtspServer->envir().taskScheduler().scheduleDelayedTask(
+    //        usecsToDelay, (TaskFunc*)periodicQOSMeasurement, (void*)NULL);
+}
+
+void qosMeasurementRecord::periodicQOSMeasurement(void* /*clientData*/) {
+    struct timeval timeNow;
+    gettimeofday(&timeNow, NULL);
+
+    for (qosMeasurementRecord* qosRecord = qosRecordHead;
+         qosRecord != NULL; qosRecord = qosRecord->fNext) {
+        qosRecord->periodicQOSMeasurement(timeNow);
+    }
+
+    // Do this again later:
+    scheduleNextQOSMeasurement();
+}
+
+void qosMeasurementRecord::checkInterPacketGaps(void* /*clientData*/) {
+    if (interPacketGapMaxTime == 0) return; // we're not checking
+
+    // Check each subsession, counting up how many packets have been received:
+    unsigned newTotNumPacketsReceived = 0;
+
+    /*MediaSubsessionIterator iter(*streamState.clientMediaSession);
+    MediaSubsession* subsession;
+    while ((subsession = iter.next()) != NULL) {
+        RTPSource* src = subsession->rtpSource();
+        if (src == NULL) continue;
+        newTotNumPacketsReceived += src->receptionStatsDB().totNumPacketsReceived();
+    }
+
+    if (newTotNumPacketsReceived == totNumPacketsReceived) {
+        // No additional packets have been received since the last time we
+        // checked, so end this stream:
+        //*env << "Closing session, because we stopped receiving packets.\n";
+        interPacketGapCheckTimerTask = NULL;
+        //sessionAfterPlaying();
+    } else {
+        totNumPacketsReceived = newTotNumPacketsReceived;
+        // Check again, after the specified delay:
+        interPacketGapCheckTimerTask
+                = env->taskScheduler().scheduleDelayedTask(interPacketGapMaxTime*1000000,
+                                                           (TaskFunc*)checkInterPacketGaps, NULL);
+    }*/
 }

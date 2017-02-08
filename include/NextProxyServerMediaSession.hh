@@ -33,10 +33,9 @@ public:
     static NextProxyServerMediaSession* createNew(UsageEnvironment& env,
                                                  GenericMediaServer* ourMediaServer, // Note: We can be used by just one server
                                                  char const* inputStreamURL, // the "rtsp://" URL of the stream we'll be proxying
+                                                 portNumBits tunnelOverHTTPPortNum = 0,
                                                  char const* streamName = NULL,
                                                  char const* username = NULL, char const* password = NULL,
-                                                 portNumBits tunnelOverHTTPPortNum = 0,
-            // for streaming the *proxied* (i.e., back-end) stream
                                                  int verbosityLevel = 0);
 
 protected:
@@ -58,7 +57,14 @@ public:
     MediaSession* getClientMediaSession();
     RTSPClient* getRTSPClient();
     RTCPInstance* getRTCPInstance();
+    //void checkInterPacketGaps(void*);
+    //void checkProxyClientDescribeCompleteness(void*);
 
+private:
+    unsigned interPacketGapMaxTime = 5;//in seceonds
+    unsigned totNumPacketsReceived = ~0; // used if checking inter-packet gaps
+    TaskToken proxyClientDescribeCompletenessCheckTask;
+    TaskToken interPacketGapCheckTimerTask = NULL;
 };
 
 #endif //MYAPPLICATION_NEXTPROXYSERVERMEDIASESSION_HH
