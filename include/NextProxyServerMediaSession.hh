@@ -10,6 +10,10 @@
 #include "ProxyServerMediaSession.hh"
 #endif //PROXYSERVERMEDIASESSION_HH
 
+#define PROXY_BACK_END_NO_RESPONSE 100;
+#define PROXY_INITIALIZING 200;
+#define PROXY_READY 300;
+
 class NextProxyRTSPClient: public ProxyRTSPClient {
 public:
     NextProxyRTSPClient(class ProxyServerMediaSession& ourProxyServerMediaSession, char const* rtspURL,

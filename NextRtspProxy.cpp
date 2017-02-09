@@ -11,16 +11,15 @@ char eventLoopWatchVariable = 0;
 void printQOSData();
 void addToStreamClientState();
 void beginQOSMeasurement();
-void checkProxyClientDescribeCompleteness();
 TaskToken receiverReportTimerTask = NULL;
 TaskToken interPacketGapCheckTimerTask = NULL;
-TaskToken proxyClientDescribeCompletenessCheckTask = NULL;
 unsigned interPacketGapMaxTime = 5;//in seceonds
 unsigned totNumPacketsReceived = ~0; // used if checking inter-packet gaps
 unsigned qosMeasurementIntervalMS = 1000;
 static qosMeasurementRecord* qosRecordHead = NULL;
 /*static*/ void periodicQOSMeasurement(void* clientData); // forward
 /*static*/ unsigned nextQOSMeasurementUSecs;
+void proxyStatusChanged(int messageCode);
 
 typedef struct stream_client_state {
     MediaSession* mediaSession;
@@ -47,12 +46,14 @@ void addToStreamClientState() {
 
 void *doEventLoopFunc(void* context) {
 
+    int message = PROXY_INITIALIZING;
+    proxyStatusChanged(message);
+
     rtspServer->envir().taskScheduler().doEventLoop(&((NextProxyServerMediaSession*) streamState.mediaSession)->describeCompletedFlag);
     addToStreamClientState();
 
-    //
-    // Send message to player to start playing here!
-    //
+    message = PROXY_READY;
+    proxyStatusChanged(message);
 
     rtspServer->envir().taskScheduler().doEventLoop(&eventLoopWatchVariable);
 
@@ -65,7 +66,6 @@ void shutdownServer(RTSPServer *rtspServer) {
 
         rtspServer->envir().taskScheduler().unscheduleDelayedTask(receiverReportTimerTask);
         rtspServer->envir().taskScheduler().unscheduleDelayedTask(interPacketGapCheckTimerTask);
-        rtspServer->envir().taskScheduler().unscheduleDelayedTask(proxyClientDescribeCompletenessCheckTask);
 
         printQOSData();
 
@@ -223,10 +223,8 @@ void checkInterPacketGaps() {
 
         interPacketGapCheckTimerTask = NULL;
 
-        //
-        // notify the player to start again here
-        //
-
+        int message = PROXY_BACK_END_NO_RESPONSE;
+        proxyStatusChanged(message);
 
     } else {
         totNumPacketsReceived = newTotNumPacketsReceived;
@@ -235,6 +233,34 @@ void checkInterPacketGaps() {
                 = rtspServer->envir().taskScheduler().scheduleDelayedTask(interPacketGapMaxTime*1000000,
                                                                           (TaskFunc*)checkInterPacketGaps, NULL);
     }
+}
+
+void proxyStatusChanged(int messageCode) {
+
+    //
+    // call front-end video player to do relative action
+    //
+
+    switch(messageCode) {
+
+        case PROXY_BACK_END_NO_RESPONSE:
+
+            break;
+
+        case PROXY_INITIALIZING:
+
+            break;
+
+        case PROXY_READY:
+
+            break;
+
+        default:
+
+            break;
+
+    }
+
 }
 
 char startRtspProxy(char* streamUrl) {

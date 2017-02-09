@@ -90,9 +90,32 @@ void sendJavaMsg(JNIEnv *env, jobject instance, jmethodID func, const char* msg)
     env->DeleteLocalRef(javaMsg);
 }
 
+void notifyBackendDead(int msg) {
+    int messageCode = msg;
+
+    JavaVM *javaVM = proxyContext.javaVM;
+    JNIEnv *env;
+    jint res = javaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (res != JNI_OK) {
+        res = javaVM->AttachCurrentThread(&env, NULL);
+        if (JNI_OK != res) {
+            LOGE("Failed to AttachCurrentThread, ErrorCode = %d", res);
+            return;
+        }
+    }
+
+    jmethodID methodId = env->GetMethodID(proxyContext.mainActivityClazz, "callbackReceived", "(I)V");
+    env->CallVoidMethod(proxyContext.mainActivityObject, methodId, messageCode);
+
+    javaVM->DetachCurrentThread();
+}
+
 void *doEventLoopFunc(void* context) {
 
-    ProxyContext *pContext = (ProxyContext*) context;
+    int message = PROXY_INITIALIZING;
+    notifyBackendDead(message);
+
+    /*ProxyContext *pContext = (ProxyContext*) context;
     JavaVM *javaVM = pContext->javaVM;
     JNIEnv *env;
     jint res = javaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
@@ -106,13 +129,15 @@ void *doEventLoopFunc(void* context) {
 
     jmethodID statusId = env->GetMethodID(pContext->mainActivityClazz,
                                           "serverStarted",
-                                          "(Ljava/lang/String;)V");
+                                          "(Ljava/lang/String;)V");*/
 
     rtspServer->envir().taskScheduler().doEventLoop(&((NextProxyServerMediaSession*) streamState.mediaSession)->describeCompletedFlag);
 
-    sendJavaMsg(env, pContext->mainActivityObject, statusId, "Good!");
+    message = PROXY_READY;
+    notifyBackendDead(message);
+    /*sendJavaMsg(env, pContext->mainActivityObject, statusId, "Good!");
 
-    javaVM->DetachCurrentThread();
+    javaVM->DetachCurrentThread();*/
 
     addToStreamClientState();
 
@@ -159,58 +184,6 @@ void shutdownServer(RTSPServer *rtspServer) {
 void addToStreamClientState() {
     MediaSession* mediaSession = ((NextProxyServerMediaSession*) streamState.mediaSession)->getClientMediaSession();
     streamState.clientMediaSession = mediaSession;
-}
-
-FUNC(jstring, initRtspProxy, jstring streamUrl) {
-
-    OutPacketBuffer::maxSize = 100000;
-
-    UsageEnvironment* usageEnv;
-    TaskScheduler* scheduler = BasicTaskScheduler::createNew();
-    usageEnv = BasicUsageEnvironment::createNew(*scheduler);
-
-    portNumBits tunnelOverHTTPPortNum = 0;
-
-    rtspServer = createRTSPServer(usageEnv);
-
-    const jsize len = env->GetStringUTFLength(streamUrl);
-    char const* proxiedStreamUrl = env->GetStringUTFChars(streamUrl, 0);
-
-    // for TCP back-end connection
-    //streamRTPOverTCP = True;
-    tunnelOverHTTPPortNum = (portNumBits)(~0);
-
-    char streamName[30];
-    sprintf(streamName, "%s", "proxyStream");
-
-    NextProxyServerMediaSession* sms = NextProxyServerMediaSession::createNew(*usageEnv, rtspServer, proxiedStreamUrl, tunnelOverHTTPPortNum, streamName);
-
-    streamState.mediaSession = (MediaSession*) sms;
-
-    rtspServer->addServerMediaSession(sms);
-
-    //jmethodID methodId = env->GetMethodID(proxyContext.mainActivityClazz, "callbackReceived", "(J)V");
-    //env->CallVoidMethod(proxyContext.mainActivityObject, methodId, reinterpret_cast<intptr_t>(rtspServer));
-
-    LOGD("Stream is proxied!");
-
-    jclass clazz = env->GetObjectClass(thiz);
-    proxyContext.mainActivityClazz = reinterpret_cast<jclass>(env->NewGlobalRef(clazz));
-    proxyContext.mainActivityObject= env->NewGlobalRef(thiz);
-
-    pthread_attr_t threadAttr_;
-    pthread_attr_init(&threadAttr_);
-    pthread_attr_setdetachstate(&threadAttr_, PTHREAD_CREATE_DETACHED);
-    pthread_mutex_init(&proxyContext.lock, NULL);
-    pthread_t looperThread;
-    pthread_create(&looperThread, &threadAttr_, &doEventLoopFunc, &proxyContext);
-
-    return env->NewStringUTF(rtspServer->rtspURL((ServerMediaSession*) streamState.mediaSession));
-}
-
-FUNC(void, shutdownStream) {
-    //RTSPServer *server = reinterpret_cast<RTSPServer*>(jrtspServer);
-    shutdownServer(rtspServer);
 }
 
 /*static*/ void scheduleNextQOSMeasurement() {
@@ -340,24 +313,6 @@ void printQOSData() {
     delete qosRecordHead;
 }
 
-void notifyBackendDead() {
-    JavaVM *javaVM = proxyContext.javaVM;
-    JNIEnv *env;
-    jint res = javaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
-    if (res != JNI_OK) {
-        res = javaVM->AttachCurrentThread(&env, NULL);
-        if (JNI_OK != res) {
-            LOGE("Failed to AttachCurrentThread, ErrorCode = %d", res);
-            return;
-        }
-    }
-    LOGD("BACK-END DEAD!!!");
-    jmethodID methodId = env->GetMethodID(proxyContext.mainActivityClazz, "callbackReceived", "(J)V");
-    env->CallVoidMethod(proxyContext.mainActivityObject, methodId, reinterpret_cast<intptr_t>(rtspServer));
-
-    javaVM->DetachCurrentThread();
-}
-
 void checkInterPacketGaps() {
     if (interPacketGapMaxTime == 0) return; // we're not checking
 
@@ -370,14 +325,26 @@ void checkInterPacketGaps() {
         RTPSource* src = subsession->rtpSource();
         if (src == NULL) continue;
         newTotNumPacketsReceived += src->receptionStatsDB().totNumPacketsReceived();
+        RTPReceptionStatsDB::Iterator iterator(src->receptionStatsDB());
+        RTPReceptionStats* receptionStats = iterator.next(False);
+        if(receptionStats != NULL) {
+            unsigned srTime = receptionStats->lastReceivedSR_time().tv_sec;
+            LOGD("SR_time: %d", srTime);
+            unsigned srNtplsw = receptionStats->lastReceivedSR_NTPlsw();
+            LOGD("SR_NTPlsw: %d", srNtplsw);
+            unsigned srNtpmsw = receptionStats->lastReceivedSR_NTPmsw();
+            LOGD("SR_NTPmsw: %d", srNtpmsw);
+        }
     }
+
 
     if (newTotNumPacketsReceived == totNumPacketsReceived) {
         // No additional packets have been received since the last time we
         // checked, so end this stream:
 
         interPacketGapCheckTimerTask = NULL;
-        notifyBackendDead();
+        int message = PROXY_BACK_END_NO_RESPONSE;
+        notifyBackendDead(message);
 
     } else {
         totNumPacketsReceived = newTotNumPacketsReceived;
@@ -393,9 +360,57 @@ void checkProxyClientDescribeCompleteness() {
     if(((NextProxyServerMediaSession*) streamState.mediaSession)->describeCompletedSuccessfully()) {
         proxyClientDescribeCompletenessCheckTask = rtspServer->envir().taskScheduler().scheduleDelayedTask(2, (TaskFunc*) checkProxyClientDescribeCompleteness, NULL);
     } else {
-        notifyBackendDead();
+        int message = PROXY_BACK_END_NO_RESPONSE;
+        notifyBackendDead(message);
     }
 
+}
+
+FUNC(jstring, initRtspProxy, jstring streamUrl) {
+
+    OutPacketBuffer::maxSize = 100000;
+
+    UsageEnvironment* usageEnv;
+    TaskScheduler* scheduler = BasicTaskScheduler::createNew();
+    usageEnv = BasicUsageEnvironment::createNew(*scheduler);
+
+    portNumBits tunnelOverHTTPPortNum = 0;
+
+    rtspServer = createRTSPServer(usageEnv);
+
+    const jsize len = env->GetStringUTFLength(streamUrl);
+    char const* proxiedStreamUrl = env->GetStringUTFChars(streamUrl, 0);
+
+    // for TCP back-end connection
+    //streamRTPOverTCP = True;
+    tunnelOverHTTPPortNum = (portNumBits)(~0);
+
+    char streamName[30];
+    sprintf(streamName, "%s", "proxyStream");
+
+    NextProxyServerMediaSession* sms = NextProxyServerMediaSession::createNew(*usageEnv, rtspServer, proxiedStreamUrl, tunnelOverHTTPPortNum, streamName);
+
+    streamState.mediaSession = (MediaSession*) sms;
+
+    rtspServer->addServerMediaSession(sms);
+
+    //jmethodID methodId = env->GetMethodID(proxyContext.mainActivityClazz, "callbackReceived", "(J)V");
+    //env->CallVoidMethod(proxyContext.mainActivityObject, methodId, reinterpret_cast<intptr_t>(rtspServer));
+
+    LOGD("Stream is proxied!");
+
+    jclass clazz = env->GetObjectClass(thiz);
+    proxyContext.mainActivityClazz = reinterpret_cast<jclass>(env->NewGlobalRef(clazz));
+    proxyContext.mainActivityObject= env->NewGlobalRef(thiz);
+
+    pthread_attr_t threadAttr_;
+    pthread_attr_init(&threadAttr_);
+    pthread_attr_setdetachstate(&threadAttr_, PTHREAD_CREATE_DETACHED);
+    pthread_mutex_init(&proxyContext.lock, NULL);
+    pthread_t looperThread;
+    pthread_create(&looperThread, &threadAttr_, &doEventLoopFunc, &proxyContext);
+
+    return env->NewStringUTF(rtspServer->rtspURL((ServerMediaSession*) streamState.mediaSession));
 }
 
 FUNC(void, startStreamingMeasurement) {
@@ -405,6 +420,12 @@ FUNC(void, startStreamingMeasurement) {
     beginQOSMeasurement();
     //checkProxyClientDescribeCompleteness();
 }
+
+FUNC(void, shutdownStream) {
+    //RTSPServer *server = reinterpret_cast<RTSPServer*>(jrtspServer);
+    shutdownServer(rtspServer);
+}
+
 /*
 FUNC(void, startProxy) {
     eventLoopWatchVariable = 0;
