@@ -26,7 +26,13 @@ add_library(live555-libs SHARED
             live555-jni.cpp
             NextProxyServerMediaSession.cpp
             QosMeasurementRecord.cpp
-            NextProxyMonitor.cpp)
+            NextProxyMonitor.cpp
+            NextRtspProxy.cpp)
+
+set_target_properties(live555-libs
+                      PROPERTIES
+                      LIBRARY_OUTPUT_DIRECTORY
+                      "${distribution_DIR}/groupsock/lib/${ANDROID_ABI}")
 
 target_include_directories(live555-libs PRIVATE
                            ${CMAKE_SOURCE_DIR}/include

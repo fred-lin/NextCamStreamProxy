@@ -1,3 +1,4 @@
+#include <H264VideoFileSink.hh>
 #include "NextProxyServerMediaSession.hh"
 
 //NextProxyServerMediaSession implementation
@@ -66,6 +67,11 @@ ProxyRTSPClient* createNewOurProxyRTSPClientFunc(ProxyServerMediaSession& ourSer
                                    tunnelOverHTTPPortNum, verbosityLevel, socketNumToServer);
 }
 
+void NextProxyServerMediaSession::createLocalFile(MediaSubsession subsession, char const* fileName) {
+    FileSink* fileSink = NULL;
+    fileSink = H264VideoFileSink::createNew(fOurMediaServer->envir(), subsession.fmtp_spropparametersets(), fileName);
+}
+
 /*void NextProxyServerMediaSession::checkInterPacketGaps(void*) {
     if (interPacketGapMaxTime == 0) return; // we're not checking
 
@@ -101,7 +107,7 @@ void NextProxyServerMediaSession::checkProxyClientDescribeCompleteness(void*) {
     if(describeCompletedSuccessfully()) {
         proxyClientDescribeCompletenessCheckTask = fOurMediaServer->envir().taskScheduler().scheduleDelayedTask(2, (TaskFunc*) checkProxyClientDescribeCompleteness, NULL);
     } else {
-        //notifyBackendDead();
+        //notifyProxyStatusChanged();
     }
 
 }*/

@@ -33,7 +33,7 @@ void NextProxyMonitor::checkInterPacketGaps(void *clientData) {
         // checked, so end this stream:
 
         interPacketGapCheckTimerTask = NULL;
-        //notifyBackendDead();
+        //notifyProxyStatusChanged();
 
     } else {
         totNumPacketsReceived = newTotNumPacketsReceived;

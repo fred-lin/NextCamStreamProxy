@@ -13,6 +13,9 @@
 #define PROXY_BACK_END_NO_RESPONSE 100;
 #define PROXY_INITIALIZING 200;
 #define PROXY_READY 300;
+#define PROXY_P2P_DISCONNECTED 400;
+#define PROXY_CONDITION_GOOD 500;
+#define PROXY_LOW_BANDWIDTH 600;
 
 class NextProxyRTSPClient: public ProxyRTSPClient {
 public:
@@ -69,6 +72,7 @@ private:
     unsigned totNumPacketsReceived = ~0; // used if checking inter-packet gaps
     TaskToken proxyClientDescribeCompletenessCheckTask;
     TaskToken interPacketGapCheckTimerTask = NULL;
+    void createLocalFile(MediaSubsession subsession, char const* fileName);
 };
 
 #endif //MYAPPLICATION_NEXTPROXYSERVERMEDIASESSION_HH
